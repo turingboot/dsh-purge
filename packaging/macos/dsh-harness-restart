@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+APP="/Applications/DeepSeek Harness.app"
+EXEC="$APP/Contents/MacOS/DeepSeek Harness"
+
+if [ ! -x "$EXEC" ]; then
+  echo "DeepSeek Harness is not installed at $APP" >&2
+  exit 1
+fi
+
+/usr/bin/osascript -e 'tell application id "com.deepseek.dsh" to quit' >/dev/null 2>&1 || true
+/bin/sleep 2
+/usr/bin/pkill -TERM -f '^/Applications/DeepSeek Harness\.app/Contents/MacOS/DeepSeek Harness( |$)' 2>/dev/null || true
+/bin/sleep 1
+/usr/bin/pkill -KILL -f '^/Applications/DeepSeek Harness\.app/Contents/MacOS/DeepSeek Harness( |$)' 2>/dev/null || true
+/bin/sleep 1
+/usr/bin/open -a "$APP"
+
+echo "DeepSeek Harness restarted."

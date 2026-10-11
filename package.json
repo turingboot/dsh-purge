@@ -1,6 +1,6 @@
 {
   "name": "dsh-purge",
-  "version": "1.1.71",
+  "version": "1.1.72-macos.1",
   "description": "DeepSeek Harness 破甲：让所有模型都能破甲，不同模型可换不同提示词；默认提示词面向国模「小码酱」。Jailbreak for every model — swap prompts per model. 求 Star 收藏 ⭐ 如要二开，请查看署名要求部分",
   "type": "module",
   "main": "lib/index.js",
@@ -26,14 +26,17 @@
     "presets",
     "skills",
     "scripts",
+    "!scripts/build-macos-pkg.sh",
     "client.js",
     "cordis.patch.yml",
+    "cordis.macos.patch.yml",
     "screenshots.json",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
   ],
   "scripts": {
+    "test": "node --test",
     "embed-prompt": "node scripts/embed-default-prompt.mjs",
     "build:client": "node scripts/build-client.mjs"
   },
@@ -63,7 +66,7 @@
   },
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": "./cordis.macos.patch.yml"
     },
     "client": {
       "platform": "web",

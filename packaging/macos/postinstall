@@ -1,0 +1,101 @@
+#!/bin/sh
+set -eu
+
+LOG_FILE="/var/log/dsh-purge-installer.log"
+log() {
+  /bin/echo "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ') $*" >> "$LOG_FILE"
+}
+fail() {
+  log "ERROR: $*"
+  /bin/echo "dsh-purge installer: $*" >&2
+  exit 1
+}
+
+CONSOLE_USER="$(/usr/bin/stat -f '%Su' /dev/console)"
+case "$CONSOLE_USER" in
+  ""|root|loginwindow|_mbsetupuser) fail "no logged-in desktop user was found" ;;
+esac
+
+USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+[ -n "$USER_HOME" ] || fail "could not resolve the home directory for $CONSOLE_USER"
+USER_GROUP="$(/usr/bin/id -gn "$CONSOLE_USER")"
+USER_ID="$(/usr/bin/id -u "$CONSOLE_USER")"
+
+DSH_HOME=""
+for candidate in \
+  "$USER_HOME/.dsh" \
+  "$USER_HOME/Library/Application Support/DeepSeek Harness/dsh-home" \
+  "$USER_HOME/Library/Application Support/DeepSeek Harness/.dsh"
+do
+  if [ -f "$candidate/profiles/desktop/package.json" ]; then
+    DSH_HOME="$candidate"
+    break
+  fi
+done
+[ -n "$DSH_HOME" ] || fail "DeepSeek Harness desktop profile was not found"
+
+PROFILE_DIR="$DSH_HOME/profiles/desktop"
+PROFILE_JSON="$PROFILE_DIR/package.json"
+PLUGIN_SOURCE="/Library/Application Support/dsh-purge/plugin"
+DSH_CLI="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
+STAMP="$(/bin/date '+%Y%m%d-%H%M%S')"
+PROFILE_BACKUP="$PROFILE_JSON.dsh-purge-backup-$STAMP"
+
+[ -f "$PLUGIN_SOURCE/package.json" ] || fail "packaged plugin payload is missing"
+[ -x "$DSH_CLI" ] || fail "DeepSeek Harness plugin manager was not found"
+
+run_as_user() {
+  /usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/env \
+    HOME="$USER_HOME" DSH_HOME="$DSH_HOME" \
+    "$@"
+}
+
+# A detached desktop-host process can survive after the window closes and keep
+# port 19387 occupied. Stop every process whose executable is this app before
+# changing the profile; a clean launch is performed after the install.
+run_as_user /usr/bin/osascript -e 'tell application id "com.deepseek.dsh" to quit' >/dev/null 2>&1 || true
+/bin/sleep 2
+/usr/bin/pkill -TERM -u "$USER_ID" -f '^/Applications/DeepSeek Harness\.app/Contents/MacOS/DeepSeek Harness( |$)' 2>/dev/null || true
+/bin/sleep 2
+/usr/bin/pkill -KILL -u "$USER_ID" -f '^/Applications/DeepSeek Harness\.app/Contents/MacOS/DeepSeek Harness( |$)' 2>/dev/null || true
+
+/bin/cp -p "$PROFILE_JSON" "$PROFILE_BACKUP"
+/usr/sbin/chown "$CONSOLE_USER:$USER_GROUP" "$PROFILE_BACKUP"
+
+rollback() {
+  log "rolling back installation"
+  /bin/cp -p "$PROFILE_BACKUP" "$PROFILE_JSON" 2>/dev/null || true
+  /usr/sbin/chown "$CONSOLE_USER:$USER_GROUP" "$PROFILE_JSON" 2>/dev/null || true
+  run_as_user "$DSH_CLI" plugin --profile desktop install --ignore-scripts >/dev/null 2>&1 || true
+}
+
+# Older versions of this installer created ~/.dsh/plugins as root. Repair only
+# that exact directory so future user-managed plugin installs remain writable.
+if [ -d "$DSH_HOME/plugins" ]; then
+  /usr/sbin/chown "$CONSOLE_USER:$USER_GROUP" "$DSH_HOME/plugins"
+fi
+
+if ! run_as_user "$DSH_CLI" plugin --profile desktop add "$PLUGIN_SOURCE"
+then
+  rollback
+  fail "the DeepSeek Harness plugin manager could not install dsh-purge"
+fi
+
+if [ ! -f "$PROFILE_DIR/node_modules/dsh-purge/package.json" ]; then
+  rollback
+  fail "profile dependency verification failed"
+fi
+
+if ! /usr/bin/grep -q '"dsh-purge"' "$PROFILE_JSON"; then
+  rollback
+  fail "desktop profile registration verification failed"
+fi
+
+/usr/sbin/chown -R "$CONSOLE_USER:$USER_GROUP" "$PROFILE_DIR"
+log "installed dsh-purge for $CONSOLE_USER in $DSH_HOME through the official plugin manager"
+
+# Launch the installed copy by absolute path; a mounted installer DMG can expose
+# another app with the same bundle id and make name-based launch ambiguous.
+run_as_user /usr/bin/open -a "/Applications/DeepSeek Harness.app" >/dev/null 2>&1 || \
+  log "install completed; automatic app launch was unavailable"
+exit 0
